@@ -15,6 +15,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from builtins import str
+from collections import defaultdict
 from past.utils import old_div
 import logging
 import os
@@ -32,6 +33,9 @@ from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBa
 from toil.lib.misc import CalledProcessErrorStderr, call_command
 
 logger = logging.getLogger(__name__)
+
+
+MAX_MEMORY = 60 * 1e9
 
 TERMINAL_STATES = {
     "BOOT_FAIL": BatchJobExitReason.LOST,
@@ -67,7 +71,26 @@ NONTERMINAL_STATES = {
 
 class SlurmBatchSystem(AbstractGridEngineBatchSystem):
 
+    def __init__(self, *args, **kwargs):
+        """Create a mapping table for JobIDs to JobNodes."""
+        super().__init__(*args, **kwargs)
+        self.Id2Node = {}
+        self.resourceRetryCount = defaultdict(set)
+
+    def issueBatchJob(self, jobDesc, job_environment=None):
+        """Load the jobDesc into the JobID mapping table."""
+        jobID = super().issueBatchJob(jobDesc, job_environment)
+        self.Id2Node[jobID] = jobDesc
+        return jobID
+
+
     class Worker(AbstractGridEngineBatchSystem.Worker):
+
+        def forgetJob(self, jobID):
+            """Remove jobNode from the mapping table when forgetting."""
+            self.boss.Id2Node.pop(jobID, None)
+            self.boss.resourceRetryCount.pop(jobID, None)
+            return super().forgetJob(jobID)
 
         def getRunningJobIDs(self):
             # Should return a dictionary of Job IDs and number of seconds
@@ -119,7 +142,36 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             job_id = int(batchJobID.split('.')[0])
             status_dict = self._get_job_details([job_id])
             status = status_dict[job_id]
-            return self._get_job_return_code(status)
+            exit_code = self._get_job_return_code(status)
+
+            if exit_code[1] == BatchJobExitReason.MEMLIMIT:
+                # If job was killed because of memory, retry it with more memory.
+                status = self._get_job_return_code(self._customRetry(job_id))
+            return exit_code
+        
+        def _customRetry(self, jobID):
+            """Retry job if killed by slurm due to memlimit problems."""
+            try:
+                jobNode = self.boss.Id2Node[jobID]
+            except KeyError:
+                logger.error("Can't resource retry %s, jobNode not found", jobID)
+                return 1
+
+            retry_type = "memlimit"
+            jobNode.jobName = (jobNode.jobName or "") + "OOM resource retry"
+            memory = jobNode.memory * 2 if jobNode.memory < MAX_MEMORY else MAX_MEMORY
+            sbatch_line = self.prepareSubmission(jobNode.cores, memory, jobID, jobNode.command, jobNode.jobName)
+
+            if retry_type not in self.boss.resourceRetryCount[jobID]:
+                slurm_job_id = self.submitJob(sbatch_line)
+                self.batchJobIDs[jobID] = (slurm_job_id, None)
+                self.boss.resourceRetryCount[jobID].add(retry_type)
+                logger.info("Detected job killed by SLURM, attempting retry: %s", slurm_job_id)
+            else:
+                logger.error("Can't retry for %s twice: %s", retry_type, jobID)
+                return 1
+
+            return None
 
         def _get_job_details(self, job_id_list):
             """
@@ -393,7 +445,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
         # --format to get memory, cpu
         max_cpu = 0
         max_mem = MemoryString('0')
-        lines = subprocess.check_output(['sinfo', '-Nhe', '--format', '%m %c']).decode('utf-8').split('\n')
+        lines = call_command(['sinfo', '-Nhe', '--format', '%m %c'], quiet=True).split('\n')
         for line in lines:
             values = line.split()
             if len(values) < 2:
