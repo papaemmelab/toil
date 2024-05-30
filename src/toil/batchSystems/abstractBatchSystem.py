@@ -16,6 +16,7 @@ from future import standard_library
 standard_library.install_aliases()
 from future.utils import with_metaclass
 from builtins import object
+import enum
 import os
 import shutil
 import logging
@@ -36,6 +37,44 @@ except ImportError:
     CWL_INTERNAL_JOBS = ()
 
 logger = logging.getLogger(__name__)
+
+# Value to use as exitStatus in UpdatedBatchJobInfo.exitStatus when status is not available.
+EXIT_STATUS_UNAVAILABLE_VALUE = 255
+
+class BatchJobExitReason(enum.IntEnum):
+    FINISHED = 1
+    """Successfully finished."""
+    FAILED = 2
+    """Job finished, but failed."""
+    LOST = 3
+    """Preemptable failure (job's executing host went away)."""
+    KILLED = 4
+    """Job killed before finishing."""
+    ERROR = 5
+    """Internal error."""
+    MEMLIMIT = 6
+    """Job hit batch system imposed memory limit."""
+    MISSING = 7
+    """Job disappeared from the scheduler without actually stopping, so Toil killed it."""
+    MAXJOBDURATION = 8
+    """Job ran longer than --maxJobDuration, so Toil killed it."""
+    PARTITION = 9
+    """Job was not able to talk to the leader via the job store, so Toil declared it failed."""
+
+
+    @classmethod
+    def to_string(cls, value):
+        """
+        Convert to human-readable string.
+
+        Given an int that may be or may be equal to a value from the enum,
+        produce the string value of its matching enum entry, or a stringified
+        int.
+        """
+        try:
+            return cls(value).name
+        except ValueError:
+            return str(value)
 
 
 # A class containing the information required for worker cleanup on shutdown of the batch system.
