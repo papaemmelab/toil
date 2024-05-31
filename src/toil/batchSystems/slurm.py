@@ -78,9 +78,9 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
         self.Id2Node = {}
         self.resourceRetryCount = defaultdict(set)
 
-    def issueBatchJob(self, jobDesc, job_environment=None):
+    def issueBatchJob(self, jobDesc):
         """Load the jobDesc into the JobID mapping table."""
-        jobID = super(SlurmBatchSystem, self).issueBatchJob(jobDesc, job_environment)
+        jobID = super(SlurmBatchSystem, self).issueBatchJob(jobDesc)
         self.Id2Node[jobID] = jobDesc
         return jobID
 
