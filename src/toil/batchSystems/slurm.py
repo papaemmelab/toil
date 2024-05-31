@@ -74,13 +74,13 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
 
     def __init__(self, *args, **kwargs):
         """Create a mapping table for JobIDs to JobNodes."""
-        super().__init__(*args, **kwargs)
+        super(SlurmBatchSystem, self).__init__(*args, **kwargs)
         self.Id2Node = {}
         self.resourceRetryCount = defaultdict(set)
 
     def issueBatchJob(self, jobDesc, job_environment=None):
         """Load the jobDesc into the JobID mapping table."""
-        jobID = super().issueBatchJob(jobDesc, job_environment)
+        jobID = super(SlurmBatchSystem, self).issueBatchJob(jobDesc, job_environment)
         self.Id2Node[jobID] = jobDesc
         return jobID
 
@@ -91,7 +91,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             """Remove jobNode from the mapping table when forgetting."""
             self.boss.Id2Node.pop(jobID, None)
             self.boss.resourceRetryCount.pop(jobID, None)
-            return super().forgetJob(jobID)
+            return super(SlurmBatchSystem.Worker, self).forgetJob(jobID)
 
         def getRunningJobIDs(self):
             # Should return a dictionary of Job IDs and number of seconds
