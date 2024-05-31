@@ -147,7 +147,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
 
             if exit_code is not None and exit_code[1] == BatchJobExitReason.MEMLIMIT:
                 # If job was killed because of memory, retry it with more memory.
-                status = self._get_job_return_code(self._customRetry(job_id))
+                exit_code = self._customRetry(job_id)
             return exit_code
         
         def _customRetry(self, jobID):
