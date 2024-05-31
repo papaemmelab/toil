@@ -291,8 +291,7 @@ def call_command(cmd, input=None, timeout=None, useCLocale=True, env=None, quiet
 
     logger.debug("run command: {}".format(" ".join(cmd)))
     start_time = datetime.datetime.now()
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            encoding='utf-8', errors="replace", env=env)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = proc.communicate(input=input, timeout=timeout)
     end_time = datetime.datetime.now()
     runtime = (end_time - start_time).total_seconds()
