@@ -260,7 +260,7 @@ def atomic_copyobj(src_fh, dest_path, length=16384):
             shutil.copyfileobj(src_fh, dest_path_fh, length=length)
 
 
-def call_command(cmd, *args, input=None, timeout=None, useCLocale=True, env=None, quiet=False):
+def call_command(cmd, input=None, timeout=None, useCLocale=True, env=None, quiet=False, *args):
     """
     Simplified calling of external commands.
 
