@@ -20,13 +20,9 @@ from past.utils import old_div
 import logging
 import os
 from pipes import quote
-from toil import subprocess
-import time
 import math
 
 # Python 3 compatibility imports
-from six.moves.queue import Empty, Queue
-from six import iteritems
 
 from toil.batchSystems import MemoryString
 from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBatchSystem
@@ -394,7 +390,11 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             
             if mem is not None:
                 # memory passed in is in bytes, but slurm expects megabytes
-                sbatch_line.append('--mem={}'.format(old_div(int(mem), 2 ** 20)))
+                per_cpu = os.getenv("TOIL_SLURM_PER_CPU")
+                if per_cpu == "Y":
+                    sbatch_line.append('--mem-per-cpu={}'.format(old_div(int(mem), 2 ** 20)))
+                else:
+                    sbatch_line.append('--mem={}'.format(old_div(int(mem), 2 ** 20)))
             if cpu is not None:
                 sbatch_line.append('--cpus-per-task={}'.format(int(math.ceil(cpu))))
 
