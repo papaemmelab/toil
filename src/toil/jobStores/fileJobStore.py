@@ -432,7 +432,7 @@ class FileJobStore(AbstractJobStore):
                     # In this case, we try to make a hard link.
                     pass
                 else:
-                    logger.error(f"Unexpected OSError when reading file '{jobStoreFilePath}' from job store")
+                    logger.error("Unexpected OSError when reading file " + jobStoreFilePath + " from job store")
                     raise
 
         # If we get here, symlinking isn't an option.

@@ -143,9 +143,12 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             job_id = int(batchJobID.split('.')[0])
             status_dict = self._get_job_details([job_id])
             status = status_dict[job_id]
-            exit_code = self._get_job_return_code(status)
-
-            if exit_code is not None and exit_code[1] == BatchJobExitReason.MEMLIMIT:
+            exit_status = self._get_job_return_code(status)
+            if exit_status is None:
+                return None
+        
+            exit_code, exit_reason = exit_status
+            if exit_reason == BatchJobExitReason.MEMLIMIT:
                 # If job was killed because of memory, retry it with more memory.
                 exit_code = self._customRetry(job_id)
             return exit_code
@@ -171,7 +174,6 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             else:
                 logger.error("Can't retry for %s twice: %s", retry_type, jobID)
                 return 1
-
             return None
 
         def _get_job_details(self, job_id_list):
