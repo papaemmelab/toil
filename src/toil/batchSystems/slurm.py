@@ -25,7 +25,7 @@ import math
 # Python 3 compatibility imports
 
 from toil.batchSystems import MemoryString
-from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBatchSystem
+from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBatchSystem, with_retries
 from toil.batchSystems.abstractBatchSystem import BatchJobExitReason, EXIT_STATUS_UNAVAILABLE_VALUE
 from toil.lib.misc import CalledProcessErrorStderr, call_command
 
@@ -136,19 +136,28 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             """
             logger.debug("Getting exit code for slurm job %d", int(batchJobID))
 
-            job_id = int(batchJobID.split('.')[0])
-            status_dict = self._get_job_details([job_id])
-            status = status_dict[job_id]
+            slurm_job_id = int(batchJobID.split('.')[0])
+            status_dict = self._get_job_details([slurm_job_id])
+            status = status_dict[slurm_job_id]
+
             exit_status = self._get_job_return_code(status)
             if exit_status is None:
                 return None
         
             exit_code, exit_reason = exit_status
             if exit_reason == BatchJobExitReason.MEMLIMIT:
-                # If job was killed because of memory, retry it with more memory.
-                exit_code = self._customRetry(job_id)
+                # Retry job with 2x memory if it was killed because of memory
+                jobID = self._getJobID(slurm_job_id)
+                exit_code = self._customRetry(jobID)
             return exit_code
         
+        def _getJobID(self, slurm_job_id):
+            """Get toil job ID from the slurm job ID."""
+            job_ids_dict = {slurm_job[0]: toil_job for toil_job, slurm_job in self.batchJobIDs.items()}
+            if slurm_job_id not in job_ids_dict:
+                raise RuntimeError("Unknown slurmJobID, could not be converted")
+            return job_ids_dict[slurm_job_id]
+
         def _customRetry(self, jobID):
             """Retry job if killed by slurm due to memlimit problems."""
             try:
@@ -158,32 +167,37 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 return 1
 
             retry_type = "memlimit"
-            jobNode.jobName = (jobNode.jobName or "") + "OOM resource retry"
-            memory = jobNode.memory * 2 if jobNode.memory < MAX_MEMORY else MAX_MEMORY
-            sbatch_line = self.prepareSubmission(jobNode.cores, memory, jobID, jobNode.command, jobNode.jobName)
-
             if retry_type not in self.boss.resourceRetryCount[jobID]:
-                slurm_job_id = self.submitJob(sbatch_line)
-                self.batchJobIDs[jobID] = (slurm_job_id, None)
+                # Submit job with 2x memory
+                jobNode.jobName = (jobNode.jobName or "") + " OOM resource retry"
+                memory = jobNode.memory * 2 if jobNode.memory < MAX_MEMORY else MAX_MEMORY
+
+                sbatch_line = self.prepareSubmission(jobNode.cores, memory, jobID, jobNode.command, jobNode.jobName)
+                logger.debug("Running %r", sbatch_line)
+                new_slurm_id = with_retries(self.submitJob, sbatch_line)
+                self.batchJobIDs[jobID] = (new_slurm_id, None)
                 self.boss.resourceRetryCount[jobID].add(retry_type)
-                logger.info("Detected job killed by SLURM, attempting retry: %s", slurm_job_id)
+                logger.info("Detected job killed by SLURM, attempting retry with 2x memory: %s", new_slurm_id)
+
+                with self.runningJobsLock:
+                    self.runningJobs.add(jobID)
             else:
                 logger.error("Can't retry for %s twice: %s", retry_type, jobID)
                 return 1
             return None
 
-        def _get_job_details(self, job_id_list):
+        def _get_job_details(self, batch_job_ids):
             """
             Helper function for `getJobExitCode` and `coalesce_job_exit_codes`.
             Fetch job details from Slurm's accounting system or job control system.
-            :param job_id_list: list of integer Job IDs.
+            :param batch_job_ids: list of integer Job IDs.
             :return: dict of job statuses, where key is the integer job ID, and value is a tuple
             containing the job's state and exit code.
             """
             try:
-                status_dict = self._getJobDetailsFromSacct(job_id_list)
+                status_dict = self._getJobDetailsFromSacct(batch_job_ids)
             except CalledProcessErrorStderr:
-                status_dict = self._getJobDetailsFromScontrol(job_id_list)
+                status_dict = self._getJobDetailsFromScontrol(batch_job_ids)
             return status_dict
 
         def _get_job_return_code(self, status):
