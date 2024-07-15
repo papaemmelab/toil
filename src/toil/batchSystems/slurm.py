@@ -27,12 +27,14 @@ import math
 from toil.batchSystems import MemoryString
 from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBatchSystem, with_retries
 from toil.batchSystems.abstractBatchSystem import BatchJobExitReason, EXIT_STATUS_UNAVAILABLE_VALUE
+from toil.lib.humanize import bytes2human
 from toil.lib.misc import CalledProcessErrorStderr, call_command
 
 logger = logging.getLogger(__name__)
 
 
 MAX_MEMORY = 60 * 1e9
+OUT_OF_MEM_RETRIES = 2
 
 TERMINAL_STATES = {
     "BOOT_FAIL": BatchJobExitReason.LOST,
@@ -72,7 +74,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
         """Create a mapping table for JobIDs to JobNodes."""
         super(SlurmBatchSystem, self).__init__(*args, **kwargs)
         self.Id2Node = {}
-        self.resourceRetryCount = defaultdict(set)
+        self.resourceRetryCount = defaultdict(int)
 
     def issueBatchJob(self, jobDesc):
         """Load the jobDesc into the JobID mapping table."""
@@ -148,7 +150,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             if exit_reason == BatchJobExitReason.MEMLIMIT:
                 # Retry job with 2x memory if it was killed because of memory
                 jobID = self._getJobID(slurm_job_id)
-                exit_code = self._customRetry(jobID)
+                exit_code = self._customRetry(jobID, slurm_job_id)
             return exit_code
         
         def _getJobID(self, slurm_job_id):
@@ -158,31 +160,40 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 raise RuntimeError("Unknown slurmJobID, could not be converted")
             return job_ids_dict[slurm_job_id]
 
-        def _customRetry(self, jobID):
-            """Retry job if killed by slurm due to memlimit problems."""
+        def _customRetry(self, jobID, slurm_job_id):
+            """Increase the job memory 2x and retry, when it's killed by memlimit problems."""
             try:
                 jobNode = self.boss.Id2Node[jobID]
             except KeyError:
                 logger.error("Can't resource retry %s, jobNode not found", jobID)
                 return 1
 
-            retry_type = "memlimit"
-            if retry_type not in self.boss.resourceRetryCount[jobID]:
-                # Submit job with 2x memory
-                jobNode.jobName = (jobNode.jobName or "") + " OOM resource retry"
-                memory = jobNode.memory * 2 if jobNode.memory < MAX_MEMORY else MAX_MEMORY
+            job_retries = self.boss.resourceRetryCount[jobID]
+            if job_retries < OUT_OF_MEM_RETRIES:
+                jobNode.jobName = (jobNode.jobName or "") + " OOM resource retry " + str(job_retries)
+                memory = jobNode.memory * (job_retries + 1) * 2 if jobNode.memory < MAX_MEMORY else MAX_MEMORY
 
-                sbatch_line = self.prepareSubmission(jobNode.cores, memory, jobID, jobNode.command, jobNode.jobName)
+                sbatch_line = self.prepareSubmission(
+                    jobNode.cores, memory, jobID, jobNode.command, jobNode.jobName
+                )
                 logger.debug("Running %r", sbatch_line)
-                new_slurm_id = with_retries(self.submitJob, sbatch_line)
-                self.batchJobIDs[jobID] = (new_slurm_id, None)
-                self.boss.resourceRetryCount[jobID].add(retry_type)
-                logger.info("Detected job killed by SLURM, attempting retry with 2x memory: %s", new_slurm_id)
-
+                new_slurm_job_id = with_retries(self.submitJob, sbatch_line)
+                self.batchJobIDs[jobID] = (new_slurm_job_id, None)
+                self.boss.resourceRetryCount[jobID] += 1
+                logger.info(
+                    "Detected job %s killed by SLURM, attempting retry with 2x memory: %s",
+                    slurm_job_id, new_slurm_job_id
+                )
+                logger.info(
+                    "Issued job %s with job batch system ID: "
+                    "%s and cores: %s, disk: %s, and memory: %s",
+                    jobNode, str(new_slurm_job_id), int(jobNode.cores),
+                    bytes2human(jobNode.disk), bytes2human(memory)
+                )
                 with self.runningJobsLock:
                     self.runningJobs.add(jobID)
             else:
-                logger.error("Can't retry for %s twice: %s", retry_type, jobID)
+                logger.error("Can't retry job %s for memlimit more than twice")
                 return 1
             return None
 
