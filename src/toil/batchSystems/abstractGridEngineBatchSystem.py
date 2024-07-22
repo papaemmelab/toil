@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import subprocess
 import time
 from abc import ABCMeta, abstractmethod
 from datetime import datetime
@@ -25,6 +26,21 @@ from toil.batchSystems.abstractBatchSystem import (BatchJobExitReason,
 from toil.lib.misc import CalledProcessErrorStderr
 
 logger = logging.getLogger(__name__)
+
+
+def with_retries(operation, *args, **kwargs):
+    retries = 3
+    latest_err = None
+    while retries:
+        retries -= 1
+        try:
+            return operation(*args, **kwargs)
+        except subprocess.CalledProcessError as err:
+            latest_err = err
+            logger.error(
+                "Operation %s failed with code %d: %s",
+                operation, err.returncode, err.output)
+    raise latest_err
 
 
 class AbstractGridEngineBatchSystem(BatchSystemCleanupSupport):
