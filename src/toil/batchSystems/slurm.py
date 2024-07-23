@@ -33,7 +33,7 @@ from toil.lib.misc import CalledProcessErrorStderr, call_command
 logger = logging.getLogger(__name__)
 
 
-MAX_MEMORY = 60 * 1e9
+MAX_MEMORY = 256 * 1e9  # More than 256 GB is hard to get
 OUT_OF_MEM_RETRIES = 2
 
 TERMINAL_STATES = {
@@ -151,6 +151,8 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 # Retry job with 2x memory if it was killed because of memory
                 jobID = self._getJobID(slurm_job_id)
                 exit_code = self._customRetry(jobID, slurm_job_id)
+            elif exit_reason == BatchJobExitReason.FINISHED:
+                pass #self._collectMetrics(slurm_job_id)
             return exit_code
         
         def _getJobID(self, slurm_job_id):
@@ -169,7 +171,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 return 1
 
             job_retries = self.boss.resourceRetryCount[jobID]
-            if job_retries < OUT_OF_MEM_RETRIES:
+            if job_retries < OUT_OF_MEM_RETRIES and jobNode.memory < MAX_MEMORY:
                 jobNode.jobName = (jobNode.jobName or "") + " OOM resource retry " + str(job_retries)
                 memory = jobNode.memory * (job_retries + 1) * 2 if jobNode.memory < MAX_MEMORY else MAX_MEMORY
 
@@ -274,6 +276,21 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             
             return state_token
 
+        def _collectMetrics(self, job_id):
+            """Print Slurm Job Metrics to file."""
+            slurm_jobs_details = os.path.join(self.boss.config.writeLogs, "slurm_metrics.txt")
+            args = [
+                'sacct',
+                '-n' if os.path.isfile(slurm_jobs_details) else '',
+                '-X',
+                '-j',
+                str(job_id),
+                '--format=JobID,JobName%20,AllocCPUS,State,ExitCode,Start,End,Elapsed,NodeList,ReqMem,MaxRSS,MaxVMSize'
+                '>>',
+                slurm_jobs_details
+            ]
+            call_command(args, quiet=True)
+
         def _getJobDetailsFromSacct(self, job_id_list):
             """
             Get SLURM job exit codes for the jobs in `job_id_list` by running `sacct`.
@@ -284,6 +301,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             job_ids = ",".join(str(id) for id in job_id_list)
             args = ['sacct',
                     '-n',  # no header
+                    '-X',  # Only main job
                     '-j', job_ids,  # job
                     '--format', 'JobIDRaw,State,ExitCode',  # specify output columns
                     '-P',  # separate columns with pipes
