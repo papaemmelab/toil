@@ -1130,7 +1130,7 @@ class Leader(object):
                                 if self.config.writeLogs or self.config.writeLogsGzip:
                                     batchSystemFileRoot, _ = os.path.splitext(os.path.basename(batchSystemFile))
                                     jobNames = replacementJob.chainedJobs
-                                    if jobNames is None:   # For jobs that fail this way, replacementJob.chainedJobs is not guaranteed to be set
+                                    if not jobNames:   # For jobs that fail this way, replacementJob.chainedJobs is not guaranteed to be set
                                         jobNames = [str(replacementJob)]
                                     jobNames = [jobName + '_' + batchSystemFileRoot for jobName in jobNames]
                                     batchSystemFileStream.seek(0)

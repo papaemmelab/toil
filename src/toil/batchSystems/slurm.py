@@ -16,11 +16,11 @@ import math
 import os
 from collections import defaultdict
 from pipes import quote
-from typing import Dict, List, Optional, Set, Tuple, TypeVar, Union, NamedTuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 from toil.batchSystems.abstractBatchSystem import BatchJobExitReason, EXIT_STATUS_UNAVAILABLE_VALUE
-from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBatchSystem
-from toil.lib.humanize import bytes2human
+from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBatchSystem, with_retries
+from toil.lib.conversions import bytes2human
 from toil.lib.misc import CalledProcessErrorStderr, call_command
 from toil.statsAndLogging import TRACE
 
@@ -75,12 +75,12 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
     def __init__(self, *args, **kwargs):
         """Create a mapping table for JobIDs to JobNodes."""
         super(SlurmBatchSystem, self).__init__(*args, **kwargs)
-        self.Id2Node: Dict[str, Dict] = {}
+        self.Id2Node: Dict[int, Dict] = {}
         self.resourceRetryCount = defaultdict(int)
 
-    def issueBatchJob(self, jobDesc):
+    def issueBatchJob(self, jobDesc, job_environment=None):
         """Load the jobDesc into the JobID mapping table."""
-        jobID = super(SlurmBatchSystem, self).issueBatchJob(jobDesc)
+        jobID = super(SlurmBatchSystem, self).issueBatchJob(jobDesc, job_environment)
         self.Id2Node[jobID] = jobDesc
         return jobID
 
@@ -187,20 +187,21 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 return None
 
             exit_code, exit_reason = exit_status
+            logger.info("Exit code for %s job is: %s, %s", slurm_job_id, str(exit_code), exit_reason)
             if exit_reason == BatchJobExitReason.MEMLIMIT:
                 # Retry job with 2x memory if it was killed because of memory
                 jobID = self._getJobID(slurm_job_id)
                 exit_code = self._customRetry(jobID, slurm_job_id)
             return exit_code
         
-        def _getJobID(self, slurm_job_id):
+        def _getJobID(self, slurm_job_id: str) -> int:
             """Get toil job ID from the slurm job ID."""
-            job_ids_dict = {slurm_job[0]: toil_job for toil_job, slurm_job in self.batchJobIDs.items()}
+            job_ids_dict = {str(slurm_job[0]): int(toil_job) for toil_job, slurm_job in self.batchJobIDs.items()}
             if slurm_job_id not in job_ids_dict:
-                raise RuntimeError("Unknown slurmJobID, could not be converted")
+                raise RuntimeError(f"Unknown slurmJobID: {slurm_job_id}.\nTracked jobs: {job_ids_dict}")
             return job_ids_dict[slurm_job_id]
         
-        def _customRetry(self, jobID, slurm_job_id):
+        def _customRetry(self, jobID: int, slurm_job_id: str) -> int:
             """Increase the job memory 2x and retry, when it's killed by memlimit problems."""
             try:
                 jobNode = self.boss.Id2Node[jobID]
@@ -449,7 +450,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                           mem: int,
                           jobID: int,
                           jobName: str,
-                          job_environment: Optional[Dict[str, str]]) -> List[str]:
+                          job_environment: Optional[Dict[str, str]] = None) -> List[str]:
 
             """
             Returns the sbatch command line to run to queue the job.
@@ -515,8 +516,8 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             if cpu is not None:
                 sbatch_line.append(f'--cpus-per-task={math.ceil(cpu)}')
 
-            stdoutfile: str = self.boss.format_std_out_err_path(jobID, '%j', 'out')
-            stderrfile: str = self.boss.format_std_out_err_path(jobID, '%j', 'err')
+            stdoutfile: str = self.boss.formatStdOutErrPath(jobID, '%j', 'out')
+            stderrfile: str = self.boss.formatStdOutErrPath(jobID, '%j', 'err')
             sbatch_line.extend(['-o', stdoutfile, '-e', stderrfile])
             
             return sbatch_line
