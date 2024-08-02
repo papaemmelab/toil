@@ -306,7 +306,10 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                     '--format', 'JobIDRaw,State,ExitCode',  # specify output columns
                     '-P',  # separate columns with pipes
                     '-S', '1970-01-01']  # override start time limit
-            stdout = call_command(args, quiet=True)
+            try:
+                stdout = call_command(args, quiet=True)
+            except CalledProcessErrorStderr as error:
+                raise error
 
             # Collect the job statuses in a dict; key is the job-id, value is a tuple containing
             # job state and exit status. Initialize dict before processing output of `sacct`.
