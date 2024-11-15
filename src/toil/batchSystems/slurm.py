@@ -17,10 +17,11 @@ from __future__ import division
 from builtins import str
 from collections import defaultdict
 from past.utils import old_div
-import logging
-import os
 from pipes import quote
+import logging
 import math
+import os
+import subprocess
 
 # Python 3 compatibility imports
 
@@ -101,7 +102,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             # -h for no header
             # --format to get jobid i, state %t and time days-hours:minutes:seconds
 
-            lines = call_command(['squeue', '-h', '--format', '%i %t %M'], quiet=True).split('\n')
+            lines = with_retries(call_command, ['squeue', '-h', '--format', '%i %t %M'], quiet=True).split('\n')
             for line in lines:
                 values = line.split()
                 if len(values) < 3:
@@ -114,17 +115,18 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             return times
 
         def killJob(self, jobID):
-            call_command(['scancel', self.getBatchSystemID(jobID)])
+            with_retries(call_command, ['scancel', self.getBatchSystemID(jobID)])
 
         def prepareSubmission(self, cpu, memory, jobID, command, jobName):
             return self.prepareSbatch(cpu, memory, jobID, jobName) + ['--wrap={}'.format(command)]
 
         def submitJob(self, subLine):
             try:
-                output = call_command(subLine)
+                output = with_retries(call_command, subLine)
                 # sbatch prints a line like 'Submitted batch job 2954103'
                 result = int(output.strip().split()[-1])
-                logger.debug("sbatch submitted job %d", result)
+                logger.info("sbatch submitted job %d", result)
+                subprocess.check_call(["echo {0} >> $PWD/job_ids.txt".format(result)], shell=True)
                 return result
             except OSError as e:
                 logger.error("sbatch command failed")
@@ -289,7 +291,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 '>>',
                 slurm_jobs_details
             ]
-            call_command(args, quiet=True)
+            with_retries(call_command, args, quiet=True)
 
         def _getJobDetailsFromSacct(self, job_id_list):
             """
@@ -307,8 +309,9 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                     '-P',  # separate columns with pipes
                     '-S', '1970-01-01']  # override start time limit
             try:
-                stdout = call_command(args, quiet=True)
+                stdout = with_retries(call_command, args, quiet=True)
             except CalledProcessErrorStderr as error:
+                logger.error("Error calling sacct: %s", str(error))
                 raise error
 
             # Collect the job statuses in a dict; key is the job-id, value is a tuple containing
@@ -354,7 +357,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             if len(job_id_list) == 1:
                 args.append(str(job_id_list[0]))
 
-            stdout = call_command(args, quiet=True)
+            stdout = with_retries(call_command, args, quiet=True)
 
             # Job records are separated by a blank line.
             if isinstance(stdout, str):
@@ -494,7 +497,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
         # --format to get memory, cpu
         max_cpu = 0
         max_mem = MemoryString('0')
-        lines = call_command(['sinfo', '-Nhe', '--format', '%m %c'], quiet=True).split('\n')
+        lines = with_retries(call_command, ['sinfo', '-Nhe', '--format', '%m %c'], quiet=True).split('\n')
         for line in lines:
             values = line.split()
             if len(values) < 2:

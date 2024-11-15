@@ -34,17 +34,23 @@ logger = logging.getLogger(__name__)
 
 
 def with_retries(operation, *args, **kwargs):
-    retries = 3
-    latest_err = None
-    while retries:
-        retries -= 1
+    """Add an incremental sleep after each retry."""
+    latest_err = Exception
+
+    for i in [1, 5, 10, 60, 90, 120]:
         try:
             return operation(*args, **kwargs)
         except subprocess.CalledProcessError as err:
             latest_err = err
             logger.error(
                 "Operation %s failed with code %d: %s",
-                operation, err.returncode, err.output)
+                operation,
+                err.returncode,
+                err.output,
+            )
+            logger.error("Retrying in %s", str(i))
+            time.sleep(i)
+
     raise latest_err
 
 
@@ -234,7 +240,7 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
                 activity |= self.createJobs(newJob)
                 activity |= self.checkOnJobs()
                 if not activity:
-                    logger.debug('No activity, sleeping for %is', self.boss.sleepSeconds())
+                   pass # logger.debug('No activity, sleeping for %is', self.boss.sleepSeconds())
 
         @abstractmethod
         def prepareSubmission(self, cpu, memory, jobID, command, jobName):

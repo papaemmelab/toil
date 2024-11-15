@@ -21,13 +21,18 @@ if sys.version_info[0] < 3:
 logger = logging.getLogger(__name__)
 class CalledProcessErrorStderr(subprocess.CalledProcessError):
     """Version of CalledProcessError that include stderr in the error message if it is set"""
+    
+    def __init__(self, returncode, cmd, output=None, stderr=None):
+        """Initialize parent class without stderr."""
+        subprocess.CalledProcessError.__init__(self, returncode, cmd, output)
+        self.stderr = stderr
 
     def __str__(self):
         if (self.returncode < 0) or (self.stderr is None):
             return str(super(CalledProcessErrorStderr, self))
         else:
             err = self.stderr if isinstance(self.stderr, str) else self.stderr.decode("ascii", errors="replace")
-            return "Command '%s' exit status %d: %s" % (self.cmd, self.returncode, err)
+            return "Command '%s' exit status %d:\n%s" % (" ".join(self.cmd), self.returncode, err)
 
 
 def mkdir_p(path):
