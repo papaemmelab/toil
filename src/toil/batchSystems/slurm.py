@@ -14,6 +14,7 @@
 import logging
 import math
 import os
+import subprocess
 from collections import defaultdict
 from pipes import quote
 from typing import Dict, List, Optional, Set, Tuple, Union
@@ -126,7 +127,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                               job_environment: Optional[Dict[str, str]] = None) -> List[str]:
             return self.prepareSbatch(cpu, memory, jobID, jobName, job_environment) + ['--wrap={}'.format(command)]
 
-        def submitJob(self, subLine: List[str]) -> int: 
+        def submitJob(self, subLine: List[str]) -> int:
             try:
                 # Slurm is not quite clever enough to follow the XDG spec on
                 # its own. If the submission command sees e.g. XDG_RUNTIME_DIR
@@ -149,7 +150,8 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 output = call_command(subLine, env=no_session_environment)
                 # sbatch prints a line like 'Submitted batch job 2954103'
                 result = int(output.strip().split()[-1])
-                logger.debug("sbatch submitted job %d", result)
+                logger.info("sbatch submitted job %d", result)
+                subprocess.check_call([f"echo {result} >> $PWD/job_ids.txt"], shell=True)
                 return result
             except OSError as e:
                 logger.error(f"sbatch command failed with error: {e}")
