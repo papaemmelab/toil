@@ -221,8 +221,11 @@ class FileJobStore(AbstractJobStore):
         # function is atomic.
         with open(self._getJobFileName(job.jobStoreID) + ".new", 'wb') as f:
             pickle.dump(job, f)
-        # This should be atomic for the file system
-        os.rename(self._getJobFileName(job.jobStoreID) + ".new", self._getJobFileName(job.jobStoreID))
+        try:
+            os.rename(self._getJobFileName(job.jobStoreID) + ".new", self._getJobFileName(job.jobStoreID))
+        except OSError:
+            # Try move when renaming between different file systems fail.
+            shutil.move(self._getJobFileName(job.jobStoreID) + ".new", self._getJobFileName(job.jobStoreID))
 
     def delete(self, jobStoreID):
         # The jobStoreID is the relative path to the directory containing the job,
@@ -417,6 +420,7 @@ class FileJobStore(AbstractJobStore):
                 # It worked!
                 return
             except OSError as e:
+                # For the list of the possible errno codes, see: https://linux.die.net/man/2/symlink
                 if e.errno == errno.EEXIST:
                     # Overwrite existing file, emulating shutil.copyfile().
                     os.unlink(localFilePath)
@@ -426,7 +430,12 @@ class FileJobStore(AbstractJobStore):
 
                     # Now we succeeded and don't need to copy
                     return
+                elif e.errno == errno.EPERM:
+                    # On some filesystems, the creation of symbolic links is not possible.
+                    # In this case, we try to make a hard link.
+                    pass
                 else:
+                    logger.error("Unexpected OSError when reading file " + jobStoreFilePath + " from job store")
                     raise
 
         # If we get here, symlinking isn't an option.
@@ -440,23 +449,38 @@ class FileJobStore(AbstractJobStore):
                 # It worked!
                 return
             except OSError as e:
+                # For the list of the possible errno codes, see: https://linux.die.net/man/2/symlink
                 if e.errno == errno.EEXIST:
                     # Overwrite existing file, emulating shutil.copyfile().
                     os.unlink(localFilePath)
                     # It would be very unlikely to fail again for same reason but possible
                     # nonetheless in which case we should just give up.
                     os.link(jobStoreFilePath, localFilePath)
-
                     # Now we succeeded and don't need to copy
                     return
                 elif e.errno == errno.EXDEV:
                     # It's a cross-device link even though it didn't appear to be.
                     # Just keep going and hit the file copy case.
                     pass
+                # See https://github.com/DataBiosphere/toil/pull/4284
+                elif e.errno == errno.EPERM:
+                    # It's a cross-device link even though it didn't appear to be.
+                    # Just keep going and hit the file copy case.
+                    pass
+                elif e.errno == errno.EPERM:
+                    # On some filesystems, hardlinking could be disallowed by permissions.
+                    # In this case, we also fall back to making a complete copy.
+                    pass
+                elif e.errno == errno.ELOOP:
+                    # Too many symbolic links were encountered. Just keep going and hit the
+                    # file copy case.
+                    pass
+                elif e.errno == errno.EMLINK:
+                    # The maximum number of links to file is reached. Just keep going and
+                    # hit the file copy case.
+                    pass
                 else:
-                    logger.critical('Unexpected OSError when reading file from job store')
-                    logger.critical('jobStoreFilePath: ' + jobStoreFilePath + ' ' + str(os.path.exists(jobStoreFilePath)))
-                    logger.critical('localFilePath: ' + localFilePath + ' ' + str(os.path.exists(localFilePath)))
+                    logger.error("Unexpected OSError when reading file " + jobStoreFilePath + " from job store")
                     raise
 
         # If we get here, neither a symlink nor a hardlink will work.
@@ -567,7 +591,12 @@ class FileJobStore(AbstractJobStore):
                             newName = tempFile.rsplit('.', 1)[0] + '.new'
                             newAbsTempFile = os.path.join(tempDir, newName)
                             # Mark this item as read
-                            os.rename(absTempFile, newAbsTempFile)
+                            try:
+                                os.rename(absTempFile, newAbsTempFile)
+                            except OSError:
+                                # Try move as rename fail between different file systems
+                                shutil.move(absTempFile, newAbsTempFile)
+
         return numberOfFilesProcessed
 
     ##########################################
