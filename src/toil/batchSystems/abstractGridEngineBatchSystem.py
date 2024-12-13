@@ -27,6 +27,7 @@ from future.utils import with_metaclass
 
 from toil import subprocess
 from toil.lib.objects import abstractclassmethod
+from toil.lib.misc import CalledProcessErrorStderr
 
 from toil.batchSystems.abstractBatchSystem import BatchSystemLocalSupport
 
@@ -40,7 +41,7 @@ def with_retries(operation, *args, **kwargs):
     for i in [1, 5, 10, 60, 90, 120]:
         try:
             return operation(*args, **kwargs)
-        except subprocess.CalledProcessError as err:
+        except CalledProcessErrorStderr as err:
             latest_err = err
             logger.error(
                 "Operation %s failed with code %d: %s",
