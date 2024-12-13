@@ -20,7 +20,7 @@ from pipes import quote
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 from toil.batchSystems.abstractBatchSystem import BatchJobExitReason, EXIT_STATUS_UNAVAILABLE_VALUE
-from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBatchSystem, with_retries
+from toil.batchSystems.abstractGridEngineBatchSystem import AbstractGridEngineBatchSystem
 from toil.lib.conversions import bytes2human
 from toil.lib.misc import CalledProcessErrorStderr, call_command
 from toil.statsAndLogging import TRACE
@@ -220,7 +220,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                     jobNode.cores, memory, jobID, jobNode.command, jobNode.jobName
                 )
                 logger.debug("Running %r", sbatch_line)
-                new_slurm_job_id = with_retries(self.submitJob, sbatch_line)
+                new_slurm_job_id = self.with_retries(self.submitJob, sbatch_line)
                 self.batchJobIDs[jobID] = (new_slurm_job_id, None)
                 self.boss.resourceRetryCount[jobID] += 1
                 logger.info(

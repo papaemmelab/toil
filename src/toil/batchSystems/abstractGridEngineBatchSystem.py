@@ -28,21 +28,6 @@ from toil.lib.misc import CalledProcessErrorStderr
 logger = logging.getLogger(__name__)
 
 
-def with_retries(operation, *args, **kwargs):
-    retries = 3
-    latest_err = None
-    while retries:
-        retries -= 1
-        try:
-            return operation(*args, **kwargs)
-        except subprocess.CalledProcessError as err:
-            latest_err = err
-            logger.error(
-                "Operation %s failed with code %d: %s",
-                operation, err.returncode, err.output)
-    raise latest_err
-
-
 class AbstractGridEngineBatchSystem(BatchSystemCleanupSupport):
     """
     A partial implementation of BatchSystemSupport for batch systems run on a
