@@ -236,7 +236,10 @@ class FileJobStore(AbstractJobStore):
         with open(self._getJobFileName(job.jobStoreID) + ".new", 'xb') as f:
             pickle.dump(job, f)
         # This should be atomic for the file system
-        os.rename(self._getJobFileName(job.jobStoreID) + ".new", self._getJobFileName(job.jobStoreID))
+        try:
+            os.rename(self._getJobFileName(job.jobStoreID) + ".new", self._getJobFileName(job.jobStoreID))
+        except OSError:
+            shutil.move(self._getJobFileName(job.jobStoreID) + ".new", self._getJobFileName(job.jobStoreID))
 
     def delete(self, jobStoreID):
         # The jobStoreID is the relative path to the directory containing the job,
@@ -599,7 +602,10 @@ class FileJobStore(AbstractJobStore):
         writeFormat = 'w' if isinstance(statsAndLoggingString, str) else 'wb'
         with open(tempStatsFile, writeFormat) as f:
             f.write(statsAndLoggingString)
-        os.rename(tempStatsFile, tempStatsFile[:-4])  # This operation is atomic
+        try:
+            os.rename(tempStatsFile, tempStatsFile[:-4])  # This operation is atomic
+        except OSError:
+            shutil.move(tempStatsFile, tempStatsFile[:-4])
 
     def readStatsAndLogging(self, callback, readAll=False):
         numberOfFilesProcessed = 0
@@ -615,7 +621,10 @@ class FileJobStore(AbstractJobStore):
                             newName = tempFile.rsplit('.', 1)[0] + '.new'
                             newAbsTempFile = os.path.join(tempDir, newName)
                             # Mark this item as read
-                            os.rename(absTempFile, newAbsTempFile)
+                            try:
+                                os.rename(absTempFile, newAbsTempFile)
+                            except OSError:
+                                shutil.move(absTempFile, newAbsTempFile)
         return numberOfFilesProcessed
 
     ##########################################
