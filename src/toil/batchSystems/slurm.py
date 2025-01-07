@@ -220,7 +220,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                     jobNode.cores, memory, jobID, jobNode.command, jobNode.jobName
                 )
                 logger.debug("Running %r", sbatch_line)
-                new_slurm_job_id = self.with_retries(self.submitJob, sbatch_line)
+                new_slurm_job_id = self.boss.with_retries(self.submitJob, sbatch_line)
                 self.batchJobIDs[jobID] = (new_slurm_job_id, None)
                 self.boss.resourceRetryCount[jobID] += 1
                 logger.info(
