@@ -119,6 +119,15 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
 
         def prepareSubmission(self, cpu, memory, jobID, command, jobName):
             return self.prepareSbatch(cpu, memory, jobID, jobName) + ['--wrap={}'.format(command)]
+        
+        def prepareSubmissionArray(self, cpu, memory, arrayNumber, jobType, idx, arrayDirectory):
+            jobID = "array" + arrayNumber
+            jobName = jobType
+            return (
+                self.prepareSbatch(cpu, memory, jobID, jobName) + 
+                ['--array 1-{}'.format(idx)] +
+                ['--wrap="/bin/bash {}/in.$SLURM_ARRAY_TASK_ID"'.format(arrayDirectory)]
+            )
 
         def submitJob(self, subLine):
             try:
@@ -461,6 +470,16 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 sbatch_line.extend(nativeConfig.split())
 
             return sbatch_line
+        
+        def prepareJobScript(self, command, idx, arrayDirectory):
+            # Creates a sh script for a job
+            # Define the script file path
+            script_path = os.path.join(arrayDirectory, f"in.{idx}")
+    
+            # Write the command into the script
+            with open(script_path, 'w') as script_file:
+                script_file.write("#!/bin/bash\n")
+                script_file.write(command + "\n")
 
         def parse_elapsed(self, elapsed):
             # slurm returns elapsed time in days-hours:minutes:seconds format
