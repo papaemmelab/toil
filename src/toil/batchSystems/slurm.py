@@ -165,6 +165,32 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             elif exit_reason == BatchJobExitReason.FINISHED:
                 pass #self._collectMetrics(slurm_job_id)
             return exit_code
+
+        def getJobExitCodes(self, batchJobIDs):
+            """
+            Get job exit codes for given list of batch job IDs.
+            :param batchJobIDs: list of strings of the form "<job>[.<task>]".
+            :return: list of integer job exit code.
+            """
+
+            slurm_job_ids = [batchJobID.split('.')[0] for batchJobID in batchJobIDs]
+            status_dict = self._get_job_details(slurm_job_ids)
+
+            batch_dict = {}
+            for batchJobID in batchJobIDs:
+                slurm_job_id = batchJobID.split('.')[0]
+                status = status_dict[slurm_job_id]
+                exit_status = self._get_job_return_code(status)
+                if exit_status is None:
+                    batch_dict[batchJobID] = None
+                    continue
+                exit_code, exit_reason = exit_status
+                if exit_reason == BatchJobExitReason.MEMLIMIT:
+                    # Retry job with 2x memory if it was killed because of memory
+                    jobID = self._getJobID(slurm_job_id)
+                    exit_code = self._customRetry(jobID, slurm_job_id)
+                batch_dict[batchJobID] = exit_code
+            return batch_dict
         
         def _getJobID(self, slurm_job_id):
             """Get toil job ID from the slurm job ID."""

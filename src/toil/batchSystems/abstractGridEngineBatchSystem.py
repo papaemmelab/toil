@@ -258,13 +258,18 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
                 return self._checkOnJobsCache
 
             activity = False
-            for jobID in list(self.runningJobs):
-                batchJobID = self.getBatchSystemID(jobID)
-                status = with_retries(self.getJobExitCode, batchJobID)
-                if status is not None:
-                    activity = True
-                    self.updatedJobsQueue.put((jobID, status))
-                    self.forgetJob(jobID)
+
+            runningJobs = list(self.runningJobs)
+            if runningJobs:
+                batchJobIDs = [self.getBatchSystemID(jobID) for jobID in runningJobs]
+                status_dict = with_retries(self.getJobExitCodes, batchJobIDs)
+                for jobID in runningJobs:
+                    batchJobID = self.getBatchSystemID(jobID)
+                    status = status_dict[batchJobID]
+                    if status is not None:
+                        activity = True
+                        self.updatedJobsQueue.put((jobID, status))
+                        self.forgetJob(jobID)
             self._checkOnJobsCache = activity
             self._checkOnJobsTimestamp = datetime.now()
             return activity
