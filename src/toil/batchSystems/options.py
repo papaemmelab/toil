@@ -123,7 +123,7 @@ def addOptions(addOptionFn, config):
                 "run on the local system. "
                 "The default (equal to the number of cores) is a maximum of "
                 "{} concurrent local housekeeping jobs.".format(localCores))
-    addOptionFn("--minJobArray", default=100,
+    addOptionFn("--minJobArray", default=5,
                 help="For batch systems that support a local queue for "
                 "housekeeping jobs (Mesos, GridEngine, htcondor, lsf, slurm, "
                 "torque), the number of jobs that are required to be submitted "
@@ -154,7 +154,7 @@ def setDefaultOptions(config):
     config.environment = {}
     config.statePollingWait = None  # if not set, will default to seconds in getWaitDuration()
     config.maxLocalJobs = cpu_count()
-    config.minJobArray = 100
+    config.minJobArray = 5
     config.manualMemArgs = False
 
     # single machine
