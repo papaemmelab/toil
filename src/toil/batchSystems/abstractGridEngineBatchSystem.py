@@ -13,6 +13,7 @@
 # limitations under the License.
 import logging
 import subprocess
+import os
 import time
 from abc import ABCMeta, abstractmethod
 from datetime import datetime
@@ -57,12 +58,20 @@ class AbstractGridEngineBatchSystem(BatchSystemCleanupSupport):
             self.updatedJobsQueue = updatedJobsQueue
             self.killQueue = killQueue
             self.killedJobsQueue = killedJobsQueue
-            self.waitingJobs: List[Any] = list()
+            self.waitingJobs = dict()
             self.runningJobs = set()
             self.runningJobsLock = Lock()
             self.batchJobIDs = dict()
             self._checkOnJobsCache = None
             self._checkOnJobsTimestamp = None
+            self._runJobsTimestamp = datetime.now()
+
+            self._jobArrayIdx = 0
+            arrayDir = os.path.join(str(self.boss.config.jobStore)[5:], "arrays")
+            if os.path.exists(arrayDir):
+                self._jobArrayIdx = max(
+                    [int(d) for d in os.listdir(arrayDir) if d.isdigit()]
+                )
 
         def getBatchSystemID(self, jobID):
             """
@@ -103,28 +112,70 @@ class AbstractGridEngineBatchSystem(BatchSystemCleanupSupport):
             activity = False
             # Load new job id if present:
             if newJob is not None:
-                self.waitingJobs.append(newJob)
+                jobType = newJob[-1].split("_")[-1]
+                if jobType in self.waitingJobs.keys():
+                    self.waitingJobs[jobType].append(newJob)
+                else:
+                    self.waitingJobs[jobType] = [newJob]
             # Launch jobs as necessary:
-            while len(self.waitingJobs) > 0 and \
-                    len(self.runningJobs) < int(self.boss.config.maxLocalJobs):
+            numWaitingJobs = len([job for jobType in self.waitingJobs for job in jobType])
+            if (numWaitingJobs < 1 or
+                    (datetime.now() - self._runJobsTimestamp).total_seconds() < 5):
+                return activity
+            self._runJobsTimestamp = datetime.now()
+            for jobType, jobs in self.waitingJobs.items():
                 activity = True
-                jobID, cpu, memory, command, jobName, environment = self.waitingJobs.pop(0)
+                if len(jobs) >= self.boss.config.minJobArray:
+                    self._jobArrayIdx += 1
+                    idx = 1
+                    jobIDs = []
+                    arrayDirectory = os.path.join(str(self.boss.config.jobStore)[5:], "arrays", str(self._jobArrayIdx))
+                    if not os.path.exists(arrayDirectory):
+                        os.makedirs(arrayDirectory)
+                    while len(jobs) > 0 and \
+                        len(self.runningJobs) + idx < int(self.boss.config.maxLocalJobs):
+                        jobID, cpu, memory, command, jobName, environment = jobs.pop(0)
+                        self.prepareJobScript(command, idx, arrayDirectory)
+                        jobIDs.append((jobID, idx))
+                        idx += 1
+                    if len(jobIDs) > 0:
+                        subLine = self.prepareSubmissionArray(
+                            cpu, memory, self._jobArrayIdx, jobName, idx, arrayDirectory, environment
+                        )
+                        logger.debug("Running %r", subLine)
+                        batchJobID = self.boss.with_retries(self.submitJob, subLine)
+                        logger.debug("Submitted job %s", str(batchJobID))
 
-                # prepare job submission command
-                subLine = self.prepareSubmission(cpu, memory, jobID, command, jobName, environment)
-                logger.debug("Running %r", subLine)
-                batchJobID = self.boss.with_retries(self.submitJob, subLine)
-                logger.debug("Submitted job %s", str(batchJobID))
+                    for jobID, idx in jobIDs:
+                        # Store dict for mapping Toil job ID to batch job ID
+                        # TODO: Note that this currently stores a tuple of (batch system
+                        # ID, Task), but the second value is None by default and doesn't
+                        # seem to be use
+                        self.batchJobIDs[jobID] = (str(batchJobID) + "_{}".format(str(idx)), None)
 
-                # Store dict for mapping Toil job ID to batch job ID
-                # TODO: Note that this currently stores a tuple of (batch system
-                # ID, Task), but the second value is None by default and doesn't
-                # seem to be used
-                self.batchJobIDs[jobID] = (batchJobID, None)
+                        # Add to queue of running jobs
+                        with self.runningJobsLock:
+                            self.runningJobs.add(jobID)
+            else:
+                while len(jobs) > 0 and \
+                        len(self.runningJobs) < int(self.boss.config.maxLocalJobs):
+                    jobID, cpu, memory, command, jobName, environment = jobs.pop(0)
 
-                # Add to queue of running jobs
-                with self.runningJobsLock:
-                    self.runningJobs.add(jobID)
+                    # prepare job submission command
+                    subLine = self.prepareSubmission(cpu, memory, jobID, command, jobName, environment)
+                    logger.debug("Running %r", subLine)
+                    batchJobID = self.boss.with_retries(self.submitJob, subLine)
+                    logger.debug("Submitted job %s", str(batchJobID))
+
+                    # Store dict for mapping Toil job ID to batch job ID
+                    # TODO: Note that this currently stores a tuple of (batch system
+                    # ID, Task), but the second value is None by default and doesn't
+                    # seem to be used
+                    self.batchJobIDs[jobID] = (str(batchJobID), None)
+
+                    # Add to queue of running jobs
+                    with self.runningJobsLock:
+                        self.runningJobs.add(jobID)
 
             return activity
 
@@ -153,8 +204,9 @@ class AbstractGridEngineBatchSystem(BatchSystemCleanupSupport):
                     # code is redundant w/ other implementations
                     self.killJob(jobID)
                 else:
-                    if jobID in self.waitingJobs:
-                        self.waitingJobs.remove(jobID)
+                    for jobType, jobs in self.waitingJobs.items():
+                        if jobID in jobs:
+                            self.waitingJobs[jobType].remove(jobID)
                     self.killedJobsQueue.put(jobID)
                     killList.remove(jobID)
 

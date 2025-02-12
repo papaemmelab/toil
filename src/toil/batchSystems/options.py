@@ -137,6 +137,15 @@ def add_all_batchsystem_options(parser: Union[ArgumentParser, _ArgumentGroup]) -
         f"local housekeeping jobs.",
     )
     parser.add_argument(
+        "--minJobArray",
+        default=5,
+        help=f"For batch systems that support a local queue for housekeeping jobs "
+        f"(Mesos, GridEngine, htcondor, lsf, slurm, torque).  Specifies the minimum "
+        f"number of these housekeeping jobs that are required to be submitted as an "
+        f"array instead of individually. "
+        f"The default is 5.",
+    )
+    parser.add_argument(
         "--manualMemArgs",
         default=False,
         action="store_true",
@@ -185,6 +194,7 @@ def set_batchsystem_config_defaults(config) -> None:
     config.environment = {}
     config.statePollingWait = None
     config.maxLocalJobs = cpu_count()
+    config.minJobArray = 5
     config.manualMemArgs = False
     config.coalesceStatusCalls = False
 

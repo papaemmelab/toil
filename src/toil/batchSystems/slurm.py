@@ -127,6 +127,22 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                               job_environment: Optional[Dict[str, str]] = None) -> List[str]:
             return self.prepareSbatch(cpu, memory, jobID, jobName, job_environment) + ['--wrap={}'.format(command)]
 
+        def prepareSubmissionArray(self,
+                                   cpu: int,
+                                   memory: int,
+                                   arrayNumber: int,
+                                   jobType: str,
+                                   idx: int,
+                                   arrayDirectory: str,
+                                   job_environment: Optional[Dict[str, str]] = None) -> List[str]:
+            jobID = "array" + str(arrayNumber)
+            jobName = jobType
+            return (
+                self.prepareSbatch(cpu, memory, jobID, jobName, job_environment) + 
+                ['--array=1-{}'.format(idx)] +
+                ['--wrap="{}/in.$SLURM_ARRAY_TASK_ID"'.format(arrayDirectory)]
+            )
+
         def submitJob(self, subLine: List[str]) -> int:
             try:
                 # Slurm is not quite clever enough to follow the XDG spec on
@@ -150,7 +166,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 output = call_command(subLine, env=no_session_environment)
                 # sbatch prints a line like 'Submitted batch job 2954103'
                 result = int(output.strip().split()[-1])
-                logger.info("sbatch submitted job %d", result)
+                logger.info("sbatch submitted job %s", result)
                 subprocess.check_call([f"echo {result} >> $PWD/job_ids.txt"], shell=True)
                 return result
             except OSError as e:
@@ -328,7 +344,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             args = ['sacct',
                     '-n',  # no header
                     '-j', job_ids,  # job
-                    '--format', 'JobIDRaw,State,ExitCode',  # specify output columns
+                    '--format', 'JobID,State,ExitCode',  # specify output columns
                     '-P',  # separate columns with pipes
                     '-S', '1970-01-01']  # override start time limit
             stdout = call_command(args, quiet=True)
@@ -350,14 +366,14 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 job_id_parts = job_id_raw.split(".")
                 if len(job_id_parts) > 1:
                     continue
-                job_id = int(job_id_parts[0])
+                job_id = job_id_parts[0]
                 status: int
                 signal: int
                 status, signal = (int(n) for n in exitcode.split(':'))
                 if signal > 0:
                     # A non-zero signal may indicate e.g. an out-of-memory killed job
                     status = 128 + signal
-                logger.log(TRACE, "%s exit code of job %d is %s, return status %d",
+                logger.log(TRACE, "%s exit code of job %s is %s, return status %d",
                              args[0], job_id, exitcode, status)
                 job_statuses[job_id] = state, status
             logger.log(TRACE, "%s returning job statuses: %s", args[0], job_statuses)
@@ -417,9 +433,9 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                             job[key] = bits[1]
                     # The first line of the record contains the JobId. Stop processing the remainder
                     # of this record, if we're not interested in this job.
-                    job_id = int(job['JobId'])
+                    job_id = job['JobId']
                     if job_id not in job_id_list:
-                        logger.log(TRACE, "%s job %d is not in the list", args[0], job_id)
+                        logger.log(TRACE, "%s job %s is not in the list", args[0], job_id)
                         break
                 if job_id is None or job_id not in job_id_list:
                     continue
@@ -433,7 +449,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                         if signal > 0:
                             # A non-zero signal may indicate e.g. an out-of-memory killed job
                             status = 128 + signal
-                        logger.log(TRACE, "%s exit code of job %d is %s, return status %d",
+                        logger.log(TRACE, "%s exit code of job %s is %s, return status %d",
                                      args[0], job_id, exitcode, status)
                         rc = status
                     else:
@@ -523,6 +539,18 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             sbatch_line.extend(['-o', stdoutfile, '-e', stderrfile])
             
             return sbatch_line
+        
+        def prepareJobScript(self, command: str, idx: int, arrayDirectory: str):
+            # Creates a sh script for a job
+            # Define the script file path
+            script_path = os.path.join(arrayDirectory, "in.{}".format(idx))
+
+            # Write the command into the script
+            with open(script_path, 'w') as script_file:
+                script_file.write("#!/bin/bash\n")
+                script_file.write(command + "\n")
+
+            os.chmod(script_path, 0o755)
 
         def parse_elapsed(self, elapsed: str) -> int:
             # slurm returns elapsed time in days-hours:minutes:seconds format
