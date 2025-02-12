@@ -119,6 +119,15 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
 
         def prepareSubmission(self, cpu, memory, jobID, command, jobName):
             return self.prepareSbatch(cpu, memory, jobID, jobName) + ['--wrap={}'.format(command)]
+        
+        def prepareSubmissionArray(self, cpu, memory, arrayNumber, jobType, idx, arrayDirectory):
+            jobID = "array" + str(arrayNumber)
+            jobName = jobType
+            return (
+                self.prepareSbatch(cpu, memory, jobID, jobName) + 
+                ['--array=1-{}'.format(idx)] +
+                ['--wrap="{}/in.$SLURM_ARRAY_TASK_ID"'.format(arrayDirectory)]
+            )
 
         def submitJob(self, subLine):
             try:
@@ -138,9 +147,9 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             :param batchJobID: string of the form "<job>[.<task>]".
             :return: integer job exit code.
             """
-            logger.debug("Getting exit code for slurm job %d", int(batchJobID))
+            logger.debug("Getting exit code for slurm job %s", batchJobID)
 
-            slurm_job_id = int(batchJobID.split('.')[0])
+            slurm_job_id = batchJobID.split('.')[0]
             status_dict = self._get_job_details([slurm_job_id])
             status = status_dict[slurm_job_id]
 
@@ -156,6 +165,32 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             elif exit_reason == BatchJobExitReason.FINISHED:
                 pass #self._collectMetrics(slurm_job_id)
             return exit_code
+
+        def getJobExitCodes(self, batchJobIDs):
+            """
+            Get job exit codes for given list of batch job IDs.
+            :param batchJobIDs: list of strings of the form "<job>[.<task>]".
+            :return: list of integer job exit code.
+            """
+
+            slurm_job_ids = [batchJobID.split('.')[0] for batchJobID in batchJobIDs]
+            status_dict = self._get_job_details(slurm_job_ids)
+
+            batch_dict = {}
+            for batchJobID in batchJobIDs:
+                slurm_job_id = batchJobID.split('.')[0]
+                status = status_dict[slurm_job_id]
+                exit_status = self._get_job_return_code(status)
+                if exit_status is None:
+                    batch_dict[batchJobID] = None
+                    continue
+                exit_code, exit_reason = exit_status
+                if exit_reason == BatchJobExitReason.MEMLIMIT:
+                    # Retry job with 2x memory if it was killed because of memory
+                    jobID = self._getJobID(slurm_job_id)
+                    exit_code = self._customRetry(jobID, slurm_job_id)
+                batch_dict[batchJobID] = exit_code
+            return batch_dict
         
         def _getJobID(self, slurm_job_id):
             """Get toil job ID from the slurm job ID."""
@@ -305,7 +340,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                     '-n',  # no header
                     '-X',  # Only main job
                     '-j', job_ids,  # job
-                    '--format', 'JobIDRaw,State,ExitCode',  # specify output columns
+                    '--format', 'JobID,State,ExitCode',  # specify output columns
                     '-P',  # separate columns with pipes
                     '-S', '1970-01-01']  # override start time limit
             try:
@@ -331,12 +366,12 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 job_id_parts = job_id_raw.split(".")
                 if len(job_id_parts) > 1:
                     continue
-                job_id = int(job_id_parts[0])
+                job_id = job_id_parts[0]
                 status, signal = (int(n) for n in exitcode.split(':'))
                 if signal > 0:
                     # A non-zero signal may indicate e.g. an out-of-memory killed job
                     status = 128 + signal
-                logger.debug("%s exit code of job %d is %s, return status %d",
+                logger.debug("%s exit code of job %s is %s, return status %d",
                              args[0], job_id, exitcode, status)
                 job_statuses[job_id] = state, status
             logger.debug("%s returning job statuses: %s", args[0], job_statuses)
@@ -393,7 +428,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                             job[key] = bits[1]
                     # The first line of the record contains the JobId. Stop processing the remainder
                     # of this record, if we're not interested in this job.
-                    job_id = int(job['JobId'])
+                    job_id = job['JobId']
                     if job_id not in job_id_list:
                         logger.debug("%s job %d is not in the list", args[0], job_id)
                         break
@@ -461,6 +496,18 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
                 sbatch_line.extend(nativeConfig.split())
 
             return sbatch_line
+        
+        def prepareJobScript(self, command, idx, arrayDirectory):
+            # Creates a sh script for a job
+            # Define the script file path
+            script_path = os.path.join(arrayDirectory, "in.{}".format(idx))
+    
+            # Write the command into the script
+            with open(script_path, 'w') as script_file:
+                script_file.write("#!/bin/bash\n")
+                script_file.write(command + "\n")
+
+            os.chmod(script_path, 0o755)
 
         def parse_elapsed(self, elapsed):
             # slurm returns elapsed time in days-hours:minutes:seconds format
