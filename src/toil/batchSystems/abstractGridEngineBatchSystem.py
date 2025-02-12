@@ -17,6 +17,7 @@ from __future__ import absolute_import
 from builtins import str
 from datetime import datetime
 import logging
+import os
 import time
 from threading import Thread, Lock
 from abc import ABCMeta, abstractmethod
@@ -27,6 +28,7 @@ from future.utils import with_metaclass
 
 from toil import subprocess
 from toil.lib.objects import abstractclassmethod
+from toil.lib.misc import CalledProcessErrorStderr
 
 from toil.batchSystems.abstractBatchSystem import BatchSystemLocalSupport
 
@@ -34,17 +36,23 @@ logger = logging.getLogger(__name__)
 
 
 def with_retries(operation, *args, **kwargs):
-    retries = 3
-    latest_err = None
-    while retries:
-        retries -= 1
+    """Add an incremental sleep after each retry."""
+    latest_err = Exception
+
+    for i in [1, 5, 10, 60, 90, 120]:
         try:
             return operation(*args, **kwargs)
-        except subprocess.CalledProcessError as err:
+        except CalledProcessErrorStderr as err:
             latest_err = err
             logger.error(
                 "Operation %s failed with code %d: %s",
-                operation, err.returncode, err.output)
+                operation,
+                err.returncode,
+                err.output,
+            )
+            logger.error("Retrying in %s", str(i))
+            time.sleep(i)
+
     raise latest_err
 
 
@@ -79,12 +87,14 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
             self.updatedJobsQueue = updatedJobsQueue
             self.killQueue = killQueue
             self.killedJobsQueue = killedJobsQueue
-            self.waitingJobs = list()
+            self.waitingJobs = dict()
             self.runningJobs = set()
             self.runningJobsLock = Lock()
             self.batchJobIDs = dict()
             self._checkOnJobsCache = None
             self._checkOnJobsTimestamp = None
+            self._jobArrayIdx = 0
+            self._runJobsTimestamp = datetime.now()
 
         def getBatchSystemID(self, jobID):
             """
@@ -125,28 +135,69 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
             activity = False
             # Load new job id if present:
             if newJob is not None:
-                self.waitingJobs.append(newJob)
+                jobType = newJob[-1].split("_")[-1]
+                if jobType in self.waitingJobs.keys():
+                    self.waitingJobs[jobType].append(newJob)
+                else:
+                    self.waitingJobs[jobType] = [newJob]
             # Launch jobs as necessary:
-            while len(self.waitingJobs) > 0 and \
-                    len(self.runningJobs) < int(self.boss.config.maxLocalJobs):
+            numWaitingJobs = len([job for jobType in self.waitingJobs for job in jobType])
+            if (numWaitingJobs < 1 or
+                    (datetime.now() - self._runJobsTimestamp).total_seconds() < 5):
+                return activity
+
+            self._runJobsTimestamp = datetime.now()
+            for jobType, jobs in self.waitingJobs.items():
                 activity = True
-                jobID, cpu, memory, command, jobName = self.waitingJobs.pop(0)
+                if len(jobs) >= self.boss.config.minJobArray:
+                    self._jobArrayIdx += 1
+                    idx = 1
+                    jobIDs = []
+                    arrayDirectory = os.path.join(str(self.boss.config.jobStore)[5:], "arrays", str(self._jobArrayIdx))
+                    if not os.path.exists(arrayDirectory):
+                        os.makedirs(arrayDirectory)
+                    while len(jobs) > 0 and \
+                        len(self.runningJobs) + idx < int(self.boss.config.maxLocalJobs):
+                        jobID, cpu, memory, command, jobName = jobs.pop(0)
+                        self.prepareJobScript(command, idx, arrayDirectory)
+                        jobIDs.append((jobID, idx))
+                        idx += 1
+                    if len(jobIDs) > 0:
+                        subLine = self.prepareSubmissionArray(cpu, memory, self._jobArrayIdx, jobName, idx, arrayDirectory)
+                        logger.debug("Running %r", subLine)
+                        batchJobID = with_retries(self.submitJob, subLine)
+                        logger.debug("Submitted job %s", str(batchJobID))
 
-                # prepare job submission command
-                subLine = self.prepareSubmission(cpu, memory, jobID, command, jobName)
-                logger.debug("Running %r", subLine)
-                batchJobID = with_retries(self.submitJob, subLine)
-                logger.debug("Submitted job %s", str(batchJobID))
+                    for jobID, idx in jobIDs:
+                        # Store dict for mapping Toil job ID to batch job ID
+                        # TODO: Note that this currently stores a tuple of (batch system
+                        # ID, Task), but the second value is None by default and doesn't
+                        # seem to be use
+                        self.batchJobIDs[jobID] = (str(batchJobID) + "_{}".format(str(idx)), None)
 
-                # Store dict for mapping Toil job ID to batch job ID
-                # TODO: Note that this currently stores a tuple of (batch system
-                # ID, Task), but the second value is None by default and doesn't
-                # seem to be used
-                self.batchJobIDs[jobID] = (batchJobID, None)
+                        # Add to queue of running jobs
+                        with self.runningJobsLock:
+                            self.runningJobs.add(jobID)
+                else:
+                    while len(jobs) > 0 and \
+                        len(self.runningJobs) < int(self.boss.config.maxLocalJobs):
+                        jobID, cpu, memory, command, jobName = jobs.pop(0)
 
-                # Add to queue of running jobs
-                with self.runningJobsLock:
-                    self.runningJobs.add(jobID)
+                        # prepare job submission command
+                        subLine = self.prepareSubmission(cpu, memory, jobID, command, jobName)
+                        logger.debug("Running %r", subLine)
+                        batchJobID = with_retries(self.submitJob, subLine)
+                        logger.debug("Submitted job %s", str(batchJobID))
+
+                        # Store dict for mapping Toil job ID to batch job ID
+                        # TODO: Note that this currently stores a tuple of (batch system
+                        # ID, Task), but the second value is None by default and doesn't
+                        # seem to be use
+                        self.batchJobIDs[jobID] = (str(batchJobID), None)
+
+                        # Add to queue of running jobs
+                        with self.runningJobsLock:
+                            self.runningJobs.add(jobID)
 
             return activity
 
@@ -175,8 +226,9 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
                     # code is redundant w/ other implementations
                     self.killJob(jobID)
                 else:
-                    if jobID in self.waitingJobs:
-                        self.waitingJobs.remove(jobID)
+                    for jobType, jobs in self.waitingJobs.items():
+                        if jobID in jobs:
+                            self.waitingJobs[jobType].remove(jobID)
                     self.killedJobsQueue.put(jobID)
                     killList.remove(jobID)
 
@@ -205,13 +257,18 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
                 return self._checkOnJobsCache
 
             activity = False
-            for jobID in list(self.runningJobs):
-                batchJobID = self.getBatchSystemID(jobID)
-                status = with_retries(self.getJobExitCode, batchJobID)
-                if status is not None:
-                    activity = True
-                    self.updatedJobsQueue.put((jobID, status))
-                    self.forgetJob(jobID)
+
+            runningJobs = list(self.runningJobs)
+            if runningJobs:
+                batchJobIDs = [self.getBatchSystemID(jobID) for jobID in runningJobs]
+                status_dict = with_retries(self.getJobExitCodes, batchJobIDs)
+                for jobID in runningJobs:
+                    batchJobID = self.getBatchSystemID(jobID)
+                    status = status_dict[batchJobID]
+                    if status is not None:
+                        activity = True
+                        self.updatedJobsQueue.put((jobID, status))
+                        self.forgetJob(jobID)
             self._checkOnJobsCache = activity
             self._checkOnJobsTimestamp = datetime.now()
             return activity
@@ -234,7 +291,7 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
                 activity |= self.createJobs(newJob)
                 activity |= self.checkOnJobs()
                 if not activity:
-                    logger.debug('No activity, sleeping for %is', self.boss.sleepSeconds())
+                   pass # logger.debug('No activity, sleeping for %is', self.boss.sleepSeconds())
 
         @abstractmethod
         def prepareSubmission(self, cpu, memory, jobID, command, jobName):

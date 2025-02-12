@@ -465,6 +465,9 @@ class AbstractFileStore(with_metaclass(ABCMeta, object)):
             if err.errno == errno.ESRCH:
                 # ESRCH == No such process
                 return False
+            elif err.errno == errno.EPERM:
+                # EPERM == operation not permitted
+                return False
             else:
                 raise
         else:
