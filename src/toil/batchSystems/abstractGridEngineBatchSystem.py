@@ -112,7 +112,7 @@ class AbstractGridEngineBatchSystem(BatchSystemCleanupSupport):
             activity = False
             # Load new job id if present:
             if newJob is not None:
-                jobType = newJob[-1].split("_")[-1]
+                jobType = newJob[-2].split("_")[-1]
                 if jobType in self.waitingJobs.keys():
                     self.waitingJobs[jobType].append(newJob)
                 else:
