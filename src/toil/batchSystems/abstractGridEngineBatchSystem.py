@@ -149,7 +149,6 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
             self._runJobsTimestamp = datetime.now()
             for jobType, jobs in self.waitingJobs.items():
                 activity = True
-                #if hasattr(self, "prepareSubmissionArray") and len(jobs) >= self.boss.config.minJobArray:
                 if len(jobs) >= self.boss.config.minJobArray:
                     self._jobArrayIdx += 1
                     idx = 1

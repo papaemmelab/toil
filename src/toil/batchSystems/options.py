@@ -128,7 +128,7 @@ def addOptions(addOptionFn, config):
                 "housekeeping jobs (Mesos, GridEngine, htcondor, lsf, slurm, "
                 "torque), the number of jobs that are required to be submitted "
                 "as an array instead of individually. "
-                "The default is 100. ")
+                "The default is 5. ")
     addOptionFn("--manualMemArgs", default=False, action='store_true', dest="manualMemArgs",
                 help="Do not add the default arguments: 'hv=MEMORY' & 'h_vmem=MEMORY' to "
                      "the qsub call, and instead rely on TOIL_GRIDGENGINE_ARGS to supply "
