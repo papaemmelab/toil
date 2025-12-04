@@ -1,18 +1,38 @@
 import random
 from six.moves import xrange
 from math import sqrt
+import datetime
 import errno
+import logging
 import os
 import shutil
+import subprocess
 import sys
 import time
 import socket
 from contextlib import contextmanager
 
+
 if sys.version_info[0] < 3:
     # Define a usable FileNotFoundError as will be raised by os.remove on a
     # nonexistent file.
     FileNotFoundError = OSError
+
+logger = logging.getLogger(__name__)
+class CalledProcessErrorStderr(subprocess.CalledProcessError):
+    """Version of CalledProcessError that include stderr in the error message if it is set"""
+    
+    def __init__(self, returncode, cmd, output=None, stderr=None):
+        """Initialize parent class without stderr."""
+        subprocess.CalledProcessError.__init__(self, returncode, cmd, output)
+        self.stderr = stderr
+
+    def __str__(self):
+        if (self.returncode < 0) or (self.stderr is None):
+            return str(super(CalledProcessErrorStderr, self))
+        else:
+            err = self.stderr if isinstance(self.stderr, str) else self.stderr.decode("ascii", errors="replace")
+            return "Command '%s' exit status %d:\n%s" % (" ".join(self.cmd), self.returncode, err)
 
 
 def mkdir_p(path):
@@ -243,3 +263,46 @@ def atomic_copyobj(src_fh, dest_path, length=16384):
     with AtomicFileCreate(dest_path) as dest_path_tmp:
         with open(dest_path_tmp, 'wb') as dest_path_fh:
             shutil.copyfileobj(src_fh, dest_path_fh, length=length)
+
+
+def call_command(cmd, input=None, timeout=None, useCLocale=True, env=None, quiet=False, *args):
+    """
+    Simplified calling of external commands.
+
+    If the process fails, CalledProcessErrorStderr is raised.
+
+    The captured stderr is always printed, regardless of
+    if an exception occurs, so it can be logged.
+
+    Always logs the command at debug log level.
+
+    :param quiet: If True, do not log the command output. If False (the
+           default), do log the command output at debug log level.
+
+    :param useCLocale: If True, C locale is forced, to prevent failures that
+           can occur in some batch systems when using UTF-8 locale.
+
+    :returns: Command standard output, decoded as utf-8.
+    """
+
+    # NOTE: Interface MUST be kept in sync with call_sacct and call_scontrol in
+    # test_slurm.py, which monkey-patch this!
+
+    # using non-C locales can cause GridEngine commands, maybe other to
+    # generate errors
+    if useCLocale:
+        env = dict(os.environ) if env is None else dict(env)  # copy since modifying
+        env["LANGUAGE"] = env["LC_ALL"] = "C"
+
+    logger.debug("run command: {}".format(" ".join(cmd)))
+    start_time = datetime.datetime.now()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate(input=input)
+    end_time = datetime.datetime.now()
+    runtime = (end_time - start_time).total_seconds()
+    sys.stderr.write(stderr)
+    if proc.returncode != 0:
+        logger.debug("command failed in {}s: {}: {}".format(runtime, " ".join(cmd), stderr.rstrip()))
+        raise CalledProcessErrorStderr(proc.returncode, cmd, output=stdout, stderr=stderr)
+    logger.debug("command succeeded in {}s: {}{}".format(runtime, " ".join(cmd), (': ' + stdout.rstrip()) if not quiet else ''))
+    return stdout

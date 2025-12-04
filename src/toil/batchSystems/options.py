@@ -123,6 +123,12 @@ def addOptions(addOptionFn, config):
                 "run on the local system. "
                 "The default (equal to the number of cores) is a maximum of "
                 "{} concurrent local housekeeping jobs.".format(localCores))
+    addOptionFn("--minJobArray", default=5,
+                help="For batch systems that support a local queue for "
+                "housekeeping jobs (Mesos, GridEngine, htcondor, lsf, slurm, "
+                "torque), the number of jobs that are required to be submitted "
+                "as an array instead of individually. "
+                "The default is 5. ")
     addOptionFn("--manualMemArgs", default=False, action='store_true', dest="manualMemArgs",
                 help="Do not add the default arguments: 'hv=MEMORY' & 'h_vmem=MEMORY' to "
                      "the qsub call, and instead rely on TOIL_GRIDGENGINE_ARGS to supply "
@@ -148,6 +154,7 @@ def setDefaultOptions(config):
     config.environment = {}
     config.statePollingWait = None  # if not set, will default to seconds in getWaitDuration()
     config.maxLocalJobs = cpu_count()
+    config.minJobArray = 5
     config.manualMemArgs = False
 
     # single machine

@@ -59,6 +59,7 @@ def runSetup():
     addict = 'addict<=2.2.0'
     sphinx = 'sphinx==1.7.5'
     pathlib2 = 'pathlib2==2.3.2'
+    enum34 = 'enum34==1.1.10'
 
     core_reqs = [
         dill,
@@ -71,7 +72,8 @@ def runSetup():
         subprocess32,
         addict,
         sphinx,
-        pathlib2]
+        pathlib2,
+        enum34]
 
     aws_reqs = [
         boto,
