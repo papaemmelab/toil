@@ -93,8 +93,14 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
             self.batchJobIDs = dict()
             self._checkOnJobsCache = None
             self._checkOnJobsTimestamp = None
-            self._jobArrayIdx = 0
             self._runJobsTimestamp = datetime.now()
+
+            self._jobArrayIdx = 0
+            arrayDir = os.path.join(str(self.boss.config.jobStore)[5:], "arrays")
+            if os.path.exists(arrayDir):
+                self._jobArrayIdx = max(
+                    [int(d) for d in os.listdir(arrayDir) if d.isdigit()]
+                )
 
         def getBatchSystemID(self, jobID):
             """
@@ -264,7 +270,7 @@ class AbstractGridEngineBatchSystem(BatchSystemLocalSupport):
                 status_dict = with_retries(self.getJobExitCodes, batchJobIDs)
                 for jobID in runningJobs:
                     batchJobID = self.getBatchSystemID(jobID)
-                    status = status_dict[batchJobID]
+                    status = status_dict.get(batchJobID)
                     if status is not None:
                         activity = True
                         self.updatedJobsQueue.put((jobID, status))

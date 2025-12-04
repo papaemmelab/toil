@@ -210,7 +210,7 @@ class SlurmBatchSystem(AbstractGridEngineBatchSystem):
             job_retries = self.boss.resourceRetryCount[jobID]
             if job_retries < OUT_OF_MEM_RETRIES and jobNode.memory < MAX_MEMORY:
                 jobNode.jobName = (jobNode.jobName or "") + " OOM resource retry " + str(job_retries)
-                memory = jobNode.memory * (job_retries + 1) * 2 if jobNode.memory < MAX_MEMORY else MAX_MEMORY
+                memory = jobNode.memory * (job_retries + 1) * 6 if jobNode.memory < MAX_MEMORY else MAX_MEMORY
 
                 sbatch_line = self.prepareSubmission(
                     jobNode.cores, memory, jobID, jobNode.command, jobNode.jobName
