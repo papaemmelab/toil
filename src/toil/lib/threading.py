@@ -363,7 +363,10 @@ def global_mutex(workDir: str, mutex: str) -> Iterator[None]:
         # Delete it while we still own it, so we can't delete it from out from
         # under someone else who thinks they are holding it.
         logger.debug('PID %d releasing mutex %s', os.getpid(), lock_filename)
-        os.unlink(lock_filename)
+        try:
+            os.unlink(lock_filename)
+        except OSError as e:
+            print(f"Error: {e.strerror}. File {lock_filename} could not be deleted.")
         fcntl.lockf(fd, fcntl.LOCK_UN)
         # Note that we are unlinking it and then unlocking it; a lot of people
         # might have opened it before we unlinked it and will wake up when they

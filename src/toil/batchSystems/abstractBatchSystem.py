@@ -53,13 +53,42 @@ WorkerCleanupInfo = NamedTuple('WorkerCleanupInfo',
      ('cleanWorkDir', bool)])
 
 
-class BatchJobExitReason(enum.Enum):
-    FINISHED: int = 1  # Successfully finished.
-    FAILED: int = 2  # Job finished, but failed.
-    LOST: int = 3  # Preemptable failure (job's executing host went away).
-    KILLED: int = 4  # Job killed before finishing.
-    ERROR: int = 5  # Internal error.
-    MEMLIMIT: int = 6  # Job hit batch system imposed memory limit
+EXIT_STATUS_UNAVAILABLE_VALUE = 255
+
+class BatchJobExitReason(enum.IntEnum):
+    FINISHED: int = 1
+    """Successfully finished."""
+    FAILED: int = 2
+    """Job finished, but failed."""
+    LOST: int = 3
+    """Preemptable failure (job's executing host went away)."""
+    KILLED: int = 4
+    """Job killed before finishing."""
+    ERROR: int = 5
+    """Internal error."""
+    MEMLIMIT: int = 6
+    """Job hit batch system imposed memory limit."""
+    MISSING: int = 7
+    """Job disappeared from the scheduler without actually stopping, so Toil killed it."""
+    MAXJOBDURATION: int = 8
+    """Job ran longer than --maxJobDuration, so Toil killed it."""
+    PARTITION: int = 9
+    """Job was not able to talk to the leader via the job store, so Toil declared it failed."""
+
+
+    @classmethod
+    def to_string(cls, value: int) -> str:
+        """
+        Convert to human-readable string.
+
+        Given an int that may be or may be equal to a value from the enum,
+        produce the string value of its matching enum entry, or a stringified
+        int.
+        """
+        try:
+            return cls(value).name
+        except ValueError:
+            return str(value)
 
 
 class AbstractBatchSystem(ABC):
